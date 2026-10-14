@@ -1,6 +1,7 @@
 import { CellFormatMutation, CellFormattingSnapshot, ExcelPort } from "../adapters/excelPort";
 import {
   CellFormatDefinition,
+  cellFormatEdges,
   computeNextCellFormat,
   DEFAULT_CELL_FORMATS,
   SelectionCellFormatState,
@@ -27,7 +28,12 @@ function snapshotToState(snap: CellFormattingSnapshot): SelectionCellFormatState
 }
 
 function definitionToMutation(def: CellFormatDefinition): CellFormatMutation {
-  const edge = { style: def.borderStyle, color: def.borderColor };
+  const edge =
+    def.borderStyle === "None"
+      ? undefined
+      : { style: def.borderStyle, color: def.borderColor, weight: def.borderWeight };
+  const edges = cellFormatEdges(def);
+  const pick = (on: boolean) => (edge && on ? edge : undefined);
   return {
     fill: { pattern: def.fillPattern, color: def.fillColor },
     font: {
@@ -39,12 +45,14 @@ function definitionToMutation(def: CellFormatDefinition): CellFormatMutation {
     },
     borders: {
       clearAll: true,
-      left: edge,
-      top: edge,
-      bottom: edge,
-      right: edge,
-      insideHorizontal: edge,
-      insideVertical: edge,
+      left: pick(edges.borderLeft),
+      top: pick(edges.borderTop),
+      bottom: pick(edges.borderBottom),
+      right: pick(edges.borderRight),
+      insideHorizontal: pick(edges.borderInsideHorizontal),
+      insideVertical: pick(edges.borderInsideVertical),
+      diagonalDown: pick(edges.borderDiagonalDown),
+      diagonalUp: pick(edges.borderDiagonalUp),
     },
   };
 }

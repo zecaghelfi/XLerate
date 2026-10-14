@@ -819,7 +819,7 @@ function applyBorderEdge(cell: Excel.Range, edge: Excel.BorderIndex, m: BorderEd
   if (m.style !== "None" && m.color !== undefined) {
     border.color = m.color;
   }
-  if (m.style !== "None" && m.weight !== undefined) {
+  if (m.style !== "None" && m.style !== "Double" && m.weight !== undefined) {
     border.weight = m.weight as Excel.BorderWeight;
   }
 }
@@ -833,6 +833,8 @@ function applyBordersMutation(cell: Excel.Range, borders: BordersMutation): void
       Excel.BorderIndex.edgeRight,
       Excel.BorderIndex.insideHorizontal,
       Excel.BorderIndex.insideVertical,
+      Excel.BorderIndex.diagonalDown,
+      Excel.BorderIndex.diagonalUp,
     ];
     for (const e of edges) cell.format.borders.getItem(e).style = "None";
   }
@@ -844,6 +846,9 @@ function applyBordersMutation(cell: Excel.Range, borders: BordersMutation): void
     applyBorderEdge(cell, Excel.BorderIndex.insideHorizontal, borders.insideHorizontal);
   if (borders.insideVertical)
     applyBorderEdge(cell, Excel.BorderIndex.insideVertical, borders.insideVertical);
+  if (borders.diagonalDown)
+    applyBorderEdge(cell, Excel.BorderIndex.diagonalDown, borders.diagonalDown);
+  if (borders.diagonalUp) applyBorderEdge(cell, Excel.BorderIndex.diagonalUp, borders.diagonalUp);
 }
 
 function applyFormatBundle(cell: Excel.Range, format: CellFormatMutation): void {

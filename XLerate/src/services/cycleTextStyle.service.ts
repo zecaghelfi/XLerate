@@ -2,16 +2,18 @@ import { CellFormatMutation, ExcelPort } from "../adapters/excelPort";
 import {
   computeNextTextStyle,
   DEFAULT_TEXT_STYLES,
-  mapBorderWeight,
   TextStyleDefinition,
+  textStyleBorderWeight,
+  textStyleEdges,
 } from "../core/textStyleCycle";
 
 function styleToMutation(style: TextStyleDefinition): CellFormatMutation {
-  const weight = mapBorderWeight(style.borderStyle);
+  const weight = textStyleBorderWeight(style);
   const edge =
     style.borderStyle === "None"
       ? undefined
-      : { style: style.borderStyle, color: style.fontColor, weight };
+      : { style: style.borderStyle, color: style.borderColor ?? style.fontColor, weight };
+  const edges = textStyleEdges(style);
 
   return {
     font: {
@@ -28,10 +30,14 @@ function styleToMutation(style: TextStyleDefinition): CellFormatMutation {
     },
     borders: {
       clearAll: true,
-      top: edge && style.borderTop ? edge : undefined,
-      bottom: edge && style.borderBottom ? edge : undefined,
-      left: edge && style.borderLeft ? edge : undefined,
-      right: edge && style.borderRight ? edge : undefined,
+      top: edge && edges.borderTop ? edge : undefined,
+      bottom: edge && edges.borderBottom ? edge : undefined,
+      left: edge && edges.borderLeft ? edge : undefined,
+      right: edge && edges.borderRight ? edge : undefined,
+      insideHorizontal: edge && edges.borderInsideHorizontal ? edge : undefined,
+      insideVertical: edge && edges.borderInsideVertical ? edge : undefined,
+      diagonalDown: edge && edges.borderDiagonalDown ? edge : undefined,
+      diagonalUp: edge && edges.borderDiagonalUp ? edge : undefined,
     },
   };
 }

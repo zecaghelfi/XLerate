@@ -18,6 +18,26 @@ export const DEFAULT_NUMBER_FORMATS: NumberFormatDefinition[] = [
   }
 ];
 
+/**
+ * Presets for the percent cycle (Ctrl+Shift+5). Same cycling rules as the
+ * number cycle; kept as a separate list so the two shortcuts never fight
+ * over the same format codes.
+ */
+export const DEFAULT_PERCENT_FORMATS: NumberFormatDefinition[] = [
+  {
+    name: "Percent, no decimals",
+    formatCode: "0%_);(0%);\"-\"_)"
+  },
+  {
+    name: "Percent, 1 decimal",
+    formatCode: "0.0%_);(0.0%);\"-\"_)"
+  },
+  {
+    name: "Percent, 2 decimals",
+    formatCode: "0.00%_);(0.00%);\"-\"_)"
+  }
+];
+
 export function hasMixedNumberFormats(formats: string[]): boolean {
   if (formats.length <= 1) {
     return false;

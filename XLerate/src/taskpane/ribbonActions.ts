@@ -199,6 +199,26 @@ async function cycleNumberFormatShortcut(): Promise<void> {
   await runCycleNumberFormatService(new ExcelPortLive(), settings.numberFormats);
 }
 
+async function cyclePercentFormatShortcut(): Promise<void> {
+  const settings = readWorkbookFormatSettings();
+  await runCycleNumberFormatService(new ExcelPortLive(), settings.percentFormats);
+}
+
+async function tracePrecedentsShortcut(): Promise<void> {
+  const settings = readWorkbookFormatSettings();
+  await openTraceDialog("precedents", settings.trace);
+}
+
+async function traceDependentsShortcut(): Promise<void> {
+  const settings = readWorkbookFormatSettings();
+  await openTraceDialog("dependents", settings.trace);
+}
+
+async function autoColorShortcut(): Promise<void> {
+  const settings = readWorkbookFormatSettings();
+  await runAutoColorService(new ExcelPortLive(), settings.autoColorPalette);
+}
+
 async function cycleCellFormatShortcut(): Promise<void> {
   const settings = readWorkbookFormatSettings();
   await runCycleCellFormatService(new ExcelPortLive(), settings.cellFormats);
@@ -245,3 +265,7 @@ Office.actions.associate("CycleDateFormat", cycleDateFormatShortcut);
 Office.actions.associate("CycleTextStyle", cycleTextStyleShortcut);
 Office.actions.associate("SmartFillRight", smartFillRightShortcut);
 Office.actions.associate("ResetFormatSettings", resetFormatSettingsShortcut);
+Office.actions.associate("CyclePercentFormat", cyclePercentFormatShortcut);
+Office.actions.associate("TracePrecedents", tracePrecedentsShortcut);
+Office.actions.associate("TraceDependents", traceDependentsShortcut);
+Office.actions.associate("AutoColor", autoColorShortcut);

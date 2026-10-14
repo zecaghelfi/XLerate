@@ -1,8 +1,19 @@
-export type CellFormatDefinition = {
+import {
+  CELL_FORMAT_DEFAULT_EDGES,
+  resolveBorderEdges,
+  type BorderEdgeFlags,
+  type BorderLineStyle,
+  type BorderWeight,
+} from "./borders";
+
+export type CellFormatDefinition = Partial<BorderEdgeFlags> & {
   name: string;
   fillPattern: "Solid" | "None";
   fillColor: string;
-  borderStyle: "None" | "Continuous";
+  /** Any Excel line style. Legacy presets only used "None" | "Continuous". */
+  borderStyle: BorderLineStyle;
+  /** Excel border weight. Missing = Excel default (Thin). */
+  borderWeight?: BorderWeight;
   borderColor: string;
   fontColor: string;
   fontBold: boolean;
@@ -145,6 +156,11 @@ function doesFillMatch(state: SelectionCellFormatState, expected: CellFormatDefi
   const patternLooksEmpty = actualPattern === null || actualPattern === "none";
   const expectedIsSolid = expectedPattern === "solid";
 
+  // A "no fill" preset ignores its stored color: any unfilled cell matches.
+  if (expectedPattern === "none" && patternLooksEmpty && (actualColor === null || actualColor === "#FFFFFF")) {
+    return true;
+  }
+
   if (expectedIsSolid && patternLooksEmpty) {
     // Color match wins if it's exact.
     if (actualColor === expectedColor) {
@@ -159,33 +175,61 @@ function doesFillMatch(state: SelectionCellFormatState, expected: CellFormatDefi
   return false;
 }
 
+/** Edge flags for a cell-format preset; legacy presets border every edge. */
+export function cellFormatEdges(def: CellFormatDefinition): BorderEdgeFlags {
+  return resolveBorderEdges(def, CELL_FORMAT_DEFAULT_EDGES);
+}
+
 function doesBorderMatch(state: SelectionCellFormatState, expected: CellFormatDefinition): boolean {
-  const styles = [
-    normalizeStyle(state.edgeLeftStyle),
-    normalizeStyle(state.edgeTopStyle),
-    normalizeStyle(state.edgeBottomStyle),
-    normalizeStyle(state.edgeRightStyle)
-  ];
-
   const expectedStyle = normalizeStyle(expected.borderStyle);
-  if (expectedStyle === "none") {
-    return styles.every((style) => style === "none" || style === null);
-  }
-
-  const colors = [
-    normalizeColor(state.edgeLeftColor),
-    normalizeColor(state.edgeTopColor),
-    normalizeColor(state.edgeBottomColor),
-    normalizeColor(state.edgeRightColor)
-  ];
   const expectedColor = normalizeColor(expected.borderColor);
+  const edges = cellFormatEdges(expected);
 
-  if (!styles.every((style) => style === expectedStyle)) {
-    return false;
+  // The snapshot is the first selected cell. Its right/bottom edge may be an
+  // inside border of the range, so an edge counts as "on" when either the
+  // outline flag or the matching inside flag is set; an edge that is only
+  // possibly on (inside flag without outline) is not compared.
+  const checks: Array<{ style: string | null; color: string | null; on: boolean; maybe: boolean }> = [
+    {
+      style: state.edgeLeftStyle,
+      color: state.edgeLeftColor,
+      on: edges.borderLeft,
+      maybe: edges.borderInsideVertical,
+    },
+    {
+      style: state.edgeRightStyle,
+      color: state.edgeRightColor,
+      on: edges.borderRight,
+      maybe: edges.borderInsideVertical,
+    },
+    {
+      style: state.edgeTopStyle,
+      color: state.edgeTopColor,
+      on: edges.borderTop,
+      maybe: edges.borderInsideHorizontal,
+    },
+    {
+      style: state.edgeBottomStyle,
+      color: state.edgeBottomColor,
+      on: edges.borderBottom,
+      maybe: edges.borderInsideHorizontal,
+    },
+  ];
+
+  for (const check of checks) {
+    const actual = normalizeStyle(check.style);
+    const isOff = actual === "none" || actual === null;
+    if (expectedStyle === "none" || (!check.on && !check.maybe)) {
+      if (!isOff) return false;
+      continue;
+    }
+    if (!check.on) continue;
+    if (actual !== expectedStyle) return false;
+    // Border color can be omitted by Excel for some uniform ranges; ignore missing values.
+    const color = normalizeColor(check.color);
+    if (color !== null && color !== expectedColor) return false;
   }
-
-  // Border color can be omitted by Excel for some uniform ranges; ignore missing values.
-  return colors.every((color) => color === null || color === expectedColor);
+  return true;
 }
 
 export function doesSelectionMatchCellFormat(state: SelectionCellFormatState, expected: CellFormatDefinition): boolean {

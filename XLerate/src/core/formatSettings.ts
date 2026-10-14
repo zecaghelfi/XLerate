@@ -1,7 +1,12 @@
 import { type AutoColorPalette, DEFAULT_AUTO_COLOR_PALETTE } from "./autoColor";
 import { type CellFormatDefinition, DEFAULT_CELL_FORMATS } from "./cellFormatCycle";
 import { type DateFormatDefinition, DEFAULT_DATE_FORMATS } from "./dateFormatCycle";
-import { type NumberFormatDefinition, DEFAULT_NUMBER_FORMATS } from "./numberFormatCycle";
+import { BORDER_EDGE_FIELDS, isBorderLineStyle, isBorderWeight } from "./borders";
+import {
+  type NumberFormatDefinition,
+  DEFAULT_NUMBER_FORMATS,
+  DEFAULT_PERCENT_FORMATS,
+} from "./numberFormatCycle";
 import { type TextStyleDefinition, DEFAULT_TEXT_STYLES } from "./textStyleCycle";
 import {
   DEFAULT_TRACE_MAX_DEPTH,
@@ -24,6 +29,7 @@ const AUTO_COLOR_KEYS: Array<keyof AutoColorPalette> = [
 
 type PersistedFormatSettings = Partial<{
   numberFormats: NumberFormatDefinition[];
+  percentFormats: NumberFormatDefinition[];
   dateFormats: DateFormatDefinition[];
   cellFormats: CellFormatDefinition[];
   textStyles: TextStyleDefinition[];
@@ -38,6 +44,7 @@ export type TraceSettings = {
 
 export type ResolvedFormatSettings = {
   numberFormats: NumberFormatDefinition[];
+  percentFormats: NumberFormatDefinition[];
   dateFormats: DateFormatDefinition[];
   cellFormats: CellFormatDefinition[];
   textStyles: TextStyleDefinition[];
@@ -155,9 +162,11 @@ function isCellFormatDefinition(value: unknown): value is CellFormatDefinition {
     !isNonEmptyString(value.name) ||
     (value.fillPattern !== "Solid" && value.fillPattern !== "None") ||
     !isNonEmptyString(value.fillColor) ||
-    (value.borderStyle !== "None" && value.borderStyle !== "Continuous") ||
+    !isBorderLineStyle(value.borderStyle) ||
+    (value.borderWeight !== undefined && !isBorderWeight(value.borderWeight)) ||
     !isNonEmptyString(value.borderColor) ||
-    !isNonEmptyString(value.fontColor)
+    !isNonEmptyString(value.fontColor) ||
+    !hasValidOptionalEdgeFlags(value)
   ) {
     return false;
   }
@@ -167,6 +176,12 @@ function isCellFormatDefinition(value: unknown): value is CellFormatDefinition {
     typeof value.fontItalic === "boolean" &&
     typeof value.fontUnderline === "boolean" &&
     typeof value.fontStrikethrough === "boolean"
+  );
+}
+
+function hasValidOptionalEdgeFlags(value: Record<string, unknown>): boolean {
+  return BORDER_EDGE_FIELDS.every(
+    (field) => value[field] === undefined || typeof value[field] === "boolean"
   );
 }
 
@@ -188,14 +203,12 @@ function isTextStyleDefinition(value: unknown): value is TextStyleDefinition {
     return false;
   }
 
-  const validBorderStyle =
-    value.borderStyle === "None" ||
-    value.borderStyle === "Continuous" ||
-    value.borderStyle === "Double" ||
-    value.borderStyle === "Dash" ||
-    value.borderStyle === "Dot";
-
-  if (!validBorderStyle) {
+  if (
+    !isBorderLineStyle(value.borderStyle) ||
+    (value.borderWeight !== undefined && !isBorderWeight(value.borderWeight)) ||
+    (value.borderColor !== undefined && !isNonEmptyString(value.borderColor)) ||
+    !hasValidOptionalEdgeFlags(value)
+  ) {
     return false;
   }
 
@@ -245,6 +258,11 @@ export function resolveFormatSettings(raw: unknown): ResolvedFormatSettings {
 
   return {
     numberFormats: resolveList(parsed.numberFormats, DEFAULT_NUMBER_FORMATS, isNumberFormatDefinition),
+    percentFormats: resolveList(
+      parsed.percentFormats,
+      DEFAULT_PERCENT_FORMATS,
+      isNumberFormatDefinition
+    ),
     dateFormats: resolveList(parsed.dateFormats, DEFAULT_DATE_FORMATS, isDateFormatDefinition),
     cellFormats: resolveList(parsed.cellFormats, DEFAULT_CELL_FORMATS, isCellFormatDefinition),
     textStyles: resolveTextStyles(parsed.textStyles),
@@ -256,6 +274,7 @@ export function resolveFormatSettings(raw: unknown): ResolvedFormatSettings {
 export function buildDefaultFormatSettings(): ResolvedFormatSettings {
   return {
     numberFormats: cloneList(DEFAULT_NUMBER_FORMATS),
+    percentFormats: cloneList(DEFAULT_PERCENT_FORMATS),
     dateFormats: cloneList(DEFAULT_DATE_FORMATS),
     cellFormats: cloneList(DEFAULT_CELL_FORMATS),
     textStyles: cloneList(DEFAULT_TEXT_STYLES),
@@ -270,6 +289,7 @@ export function buildDefaultFormatSettings(): ResolvedFormatSettings {
 export function cloneResolvedFormatSettings(settings: ResolvedFormatSettings): ResolvedFormatSettings {
   return {
     numberFormats: cloneList(settings.numberFormats),
+    percentFormats: cloneList(settings.percentFormats),
     dateFormats: cloneList(settings.dateFormats),
     cellFormats: cloneList(settings.cellFormats),
     textStyles: cloneList(settings.textStyles),
@@ -284,6 +304,13 @@ export function getFormatSettingsValidationError(settings: ResolvedFormatSetting
   }
   if (!settings.numberFormats.every((item) => isNumberFormatDefinition(item))) {
     return "Every number format needs a name and an Excel format code.";
+  }
+
+  if (settings.percentFormats.length === 0) {
+    return "Add at least one percent format before saving.";
+  }
+  if (!settings.percentFormats.every((item) => isNumberFormatDefinition(item))) {
+    return "Every percent format needs a name and an Excel format code.";
   }
 
   if (settings.dateFormats.length === 0) {

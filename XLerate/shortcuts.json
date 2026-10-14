@@ -29,6 +29,26 @@
       "id": "ResetFormatSettings",
       "type": "ExecuteFunction",
       "name": "Reset format settings"
+    },
+    {
+      "id": "CyclePercentFormat",
+      "type": "ExecuteFunction",
+      "name": "Cycle percent formats"
+    },
+    {
+      "id": "TracePrecedents",
+      "type": "ExecuteFunction",
+      "name": "Trace precedents"
+    },
+    {
+      "id": "TraceDependents",
+      "type": "ExecuteFunction",
+      "name": "Trace dependents"
+    },
+    {
+      "id": "AutoColor",
+      "type": "ExecuteFunction",
+      "name": "Auto-color fonts"
     }
   ],
   "shortcuts": [
@@ -66,6 +86,30 @@
       "action": "ResetFormatSettings",
       "key": {
         "default": "Ctrl+Shift+0"
+      }
+    },
+    {
+      "action": "CyclePercentFormat",
+      "key": {
+        "default": "Ctrl+Shift+5"
+      }
+    },
+    {
+      "action": "TracePrecedents",
+      "key": {
+        "default": "Ctrl+Shift+P"
+      }
+    },
+    {
+      "action": "TraceDependents",
+      "key": {
+        "default": "Ctrl+Shift+D"
+      }
+    },
+    {
+      "action": "AutoColor",
+      "key": {
+        "default": "Ctrl+Shift+A"
       }
     }
   ]

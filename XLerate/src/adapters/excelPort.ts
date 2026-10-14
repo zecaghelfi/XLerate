@@ -38,9 +38,19 @@ export type FillMutation = {
 };
 
 export type BorderEdgeMutation = {
-  style: "None" | "Continuous" | "Dash" | "Dot" | "Double";
+  /** Office.js BorderLineStyle. */
+  style:
+    | "None"
+    | "Continuous"
+    | "Dash"
+    | "DashDot"
+    | "DashDotDot"
+    | "Dot"
+    | "Double"
+    | "SlantDashDot";
   color?: string;
-  weight?: "Thin" | "Medium" | "Thick";
+  /** Office.js BorderWeight. Ignored for Double (Excel fixes its weight). */
+  weight?: "Hairline" | "Thin" | "Medium" | "Thick";
 };
 
 export type BordersMutation = {
@@ -53,6 +63,8 @@ export type BordersMutation = {
   /** Only meaningful for multi-cell ranges; ignored by the fake for single cells. */
   insideHorizontal?: BorderEdgeMutation;
   insideVertical?: BorderEdgeMutation;
+  diagonalDown?: BorderEdgeMutation;
+  diagonalUp?: BorderEdgeMutation;
 };
 
 export type CellFormatMutation = {

@@ -41,6 +41,7 @@
   },
   "dependencies": {
     "core-js": "^3.36.0",
+    "fflate": "^0.8.2",
     "regenerator-runtime": "^0.14.1"
   },
   "optionalDependencies": {

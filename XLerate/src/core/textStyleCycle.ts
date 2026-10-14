@@ -1,3 +1,11 @@
+import {
+  resolveBorderEdges,
+  TEXT_STYLE_DEFAULT_EDGES,
+  type BorderEdgeFlags,
+  type BorderLineStyle,
+  type BorderWeight,
+} from "./borders";
+
 export type TextStyleFillPattern = "Solid" | "None";
 
 export type TextStyleDefinition = {
@@ -10,12 +18,29 @@ export type TextStyleDefinition = {
   fontColor: string;
   fillPattern: TextStyleFillPattern;
   backColor: string;
-  borderStyle: "None" | "Continuous" | "Double" | "Dash" | "Dot";
+  /** Any Excel line style. */
+  borderStyle: BorderLineStyle;
+  /** Excel border weight. Missing = legacy mapping from the style (mapBorderWeight). */
+  borderWeight?: BorderWeight;
+  /** Border color. Missing = font color (legacy behavior). */
+  borderColor?: string;
   borderTop: boolean;
   borderBottom: boolean;
   borderLeft: boolean;
   borderRight: boolean;
+  borderInsideHorizontal?: boolean;
+  borderInsideVertical?: boolean;
+  borderDiagonalDown?: boolean;
+  borderDiagonalUp?: boolean;
 };
+
+export function textStyleEdges(style: TextStyleDefinition): BorderEdgeFlags {
+  return resolveBorderEdges(style, TEXT_STYLE_DEFAULT_EDGES);
+}
+
+export function textStyleBorderWeight(style: TextStyleDefinition): BorderWeight {
+  return style.borderWeight ?? mapBorderWeight(style.borderStyle);
+}
 
 export const DEFAULT_TEXT_STYLES: TextStyleDefinition[] = [
   {
@@ -99,15 +124,18 @@ export function computeNextTextStyle(
   return { index, style: styles[index] };
 }
 
-export function mapBorderWeight(style: TextStyleDefinition["borderStyle"]): "Thin" | "Medium" | "Thick" {
+export function mapBorderWeight(style: BorderLineStyle): "Thin" | "Medium" | "Thick" {
   if (style === "Continuous") {
     return "Medium";
   }
   if (style === "Double") {
     return "Thick";
   }
-  if (style === "Dash" || style === "Dot") {
+  if (style === "Dash" || style === "Dot" || style === "DashDot" || style === "DashDotDot") {
     return "Thin";
+  }
+  if (style === "SlantDashDot") {
+    return "Medium";
   }
   return "Thin";
 }

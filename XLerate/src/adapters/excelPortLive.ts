@@ -13,6 +13,7 @@ import {
   FontMutation,
 } from "./excelPort";
 import { autoColorProbe } from "./autoColorProbe";
+import { coalesceCells, rectToA1 } from "../core/rangeCoalesce";
 
 /**
  * The only place in the codebase that imports Office.js from domain code.
@@ -25,8 +26,11 @@ import { autoColorProbe } from "./autoColorProbe";
  */
 export class ExcelPortLive implements ExcelPort {
   private static readonly MAX_AUTO_COLOR_CELL_COUNT = 50000;
-  private static readonly AUTO_COLOR_READ_CHUNK_CELL_BUDGET = 5000;
-  private static readonly FONT_COLOR_WRITE_CHUNK_SIZE = 1000;
+  private static readonly AUTO_COLOR_READ_CHUNK_CELL_BUDGET = 15000;
+  /** Max length of one comma-separated address list passed to getRanges. */
+  private static readonly ADDRESS_LIST_MAX_CHARS = 6000;
+  /** Above this many selected cells the number cycles read only the first cell. */
+  private static readonly NUMBER_FORMAT_SCAN_CELL_LIMIT = 20000;
 
   async getSelectionCells(): Promise<CellSnapshot[]> {
     return Excel.run(async (context) => {
@@ -99,28 +103,7 @@ export class ExcelPortLive implements ExcelPort {
       const cellProperties = areas.map((area) => {
         area.load(["rowCount", "columnCount", "rowIndex", "columnIndex", "numberFormat"]);
         area.worksheet.load("name");
-        return area.getCellProperties({
-          hyperlink: true,
-          format: {
-            fill: {
-              color: true,
-              pattern: true,
-            },
-            font: {
-              name: true,
-              size: true,
-              color: true,
-              bold: true,
-              italic: true,
-              underline: true,
-              strikethrough: true,
-            },
-            borders: {
-              color: true,
-              style: true,
-            },
-          },
-        });
+        return area.getCellProperties(FORMATTING_PROPERTY_SPEC);
       });
       await context.sync();
 
@@ -141,40 +124,93 @@ export class ExcelPortLive implements ExcelPort {
               Array.isArray(area.numberFormat) && Array.isArray(area.numberFormat[r])
                 ? String(area.numberFormat[r][c] ?? "General")
                 : "General";
-            const cellProp = props[r][c];
-            const format = cellProp.format;
-            const borders = format?.borders;
-
-            snapshots.push({
-              address,
-              numberFormat: numberFormatCell,
-              hasHyperlink: hasCellHyperlink(cellProp.hyperlink),
-              fillPattern: format?.fill?.pattern ?? null,
-              fillColor: format?.fill?.color ?? null,
-              fontName: format?.font?.name ?? null,
-              fontSize: typeof format?.font?.size === "number" ? format.font.size : null,
-              fontColor: format?.font?.color ?? null,
-              fontBold: typeof format?.font?.bold === "boolean" ? format.font.bold : null,
-              fontItalic: typeof format?.font?.italic === "boolean" ? format.font.italic : null,
-              fontUnderline:
-                typeof format?.font?.underline === "string"
-                  ? format.font.underline !== "None"
-                  : null,
-              fontStrikethrough:
-                typeof format?.font?.strikethrough === "boolean" ? format.font.strikethrough : null,
-              edgeLeftStyle: borders?.left?.style ?? null,
-              edgeTopStyle: borders?.top?.style ?? null,
-              edgeBottomStyle: borders?.bottom?.style ?? null,
-              edgeRightStyle: borders?.right?.style ?? null,
-              edgeLeftColor: borders?.left?.color ?? null,
-              edgeTopColor: borders?.top?.color ?? null,
-              edgeBottomColor: borders?.bottom?.color ?? null,
-              edgeRightColor: borders?.right?.color ?? null,
-            });
+            snapshots.push(toFormattingSnapshot(address, numberFormatCell, props[r][c]));
           }
         }
       }
       return snapshots;
+    });
+  }
+
+  async getSelectionNumberFormats(): Promise<{ formats: string[]; scanned: boolean } | null> {
+    return Excel.run(async (context) => {
+      const areas = context.workbook.getSelectedRanges().areas;
+      areas.load(["rowCount", "columnCount"]);
+      await context.sync();
+      if (areas.items.length === 0) return null;
+
+      const totalCells = areas.items.reduce((n, a) => n + a.rowCount * a.columnCount, 0);
+      const scanned = totalCells <= ExcelPortLive.NUMBER_FORMAT_SCAN_CELL_LIMIT;
+      const first = areas.items[0].getCell(0, 0);
+      first.load("numberFormat");
+      if (scanned && totalCells > 1) {
+        for (const area of areas.items) area.load("numberFormat");
+      }
+      await context.sync();
+
+      const firstFormat = String(first.numberFormat?.[0]?.[0] ?? "General");
+      const formats = [firstFormat];
+      if (scanned && totalCells > 1) {
+        for (const area of areas.items) {
+          for (const row of area.numberFormat) {
+            for (const value of row) {
+              const fmt = String(value ?? "General");
+              if (!formats.includes(fmt)) {
+                formats.push(fmt);
+                // Two distinct codes already mean "mixed"; stop early.
+                if (formats.length > 1) return { formats, scanned };
+              }
+            }
+          }
+        }
+      }
+      return { formats, scanned };
+    });
+  }
+
+  async applySelectionNumberFormat(format: string): Promise<void> {
+    try {
+      await Excel.run(async (context) => {
+        const areas = context.workbook.getSelectedRanges().areas;
+        areas.load("items");
+        await context.sync();
+        // A scalar is broadcast to every cell of the area: one tiny payload
+        // regardless of selection size.
+        for (const area of areas.items) area.numberFormat = format as unknown as string[][];
+        await context.sync();
+      });
+    } catch (error) {
+      // Fallback for hosts that reject the scalar form: full-size grid per area.
+      // eslint-disable-next-line no-console
+      console.warn("[XLerate] scalar numberFormat write rejected, using grid write", error);
+      await Excel.run(async (context) => {
+        const areas = context.workbook.getSelectedRanges().areas;
+        areas.load(["rowCount", "columnCount"]);
+        await context.sync();
+        for (const area of areas.items) {
+          area.numberFormat = fillGrid(format, area.rowCount, area.columnCount);
+        }
+        await context.sync();
+      });
+    }
+  }
+
+  async getSelectionFirstCellFormatting(): Promise<CellFormattingSnapshot | null> {
+    return Excel.run(async (context) => {
+      const areas = context.workbook.getSelectedRanges().areas;
+      areas.load("items");
+      await context.sync();
+      if (areas.items.length === 0) return null;
+      const cell = areas.items[0].getCell(0, 0);
+      cell.load(["rowIndex", "columnIndex", "numberFormat"]);
+      cell.worksheet.load("name");
+      const props = cell.getCellProperties(FORMATTING_PROPERTY_SPEC);
+      await context.sync();
+      return toFormattingSnapshot(
+        { sheet: cell.worksheet.name, row: cell.rowIndex, col: cell.columnIndex },
+        String(cell.numberFormat?.[0]?.[0] ?? "General"),
+        props.value[0][0]
+      );
     });
   }
 
@@ -323,95 +359,59 @@ export class ExcelPortLive implements ExcelPort {
             );
           }
 
+          // Load the per-area payload together with the area list (collection
+          // load applies to every item): one round trip instead of two.
+          const PAYLOAD_PROPS = [
+            "rowCount",
+            "columnCount",
+            "rowIndex",
+            "columnIndex",
+            "values",
+            "formulas",
+            "numberFormat",
+          ];
+          if (!formulaCells.isNullObject) formulaCells.areas.load(PAYLOAD_PROPS);
+          if (!constantCells.isNullObject) constantCells.areas.load(PAYLOAD_PROPS);
           if (!textConstantCells.isNullObject) {
-            textConstantCells.areas.load("items");
+            textConstantCells.areas.load(["rowCount", "columnCount", "rowIndex", "columnIndex"]);
           }
-          if (!formulaCells.isNullObject) {
-            formulaCells.areas.load("items");
-          }
-          if (!constantCells.isNullObject) {
-            constantCells.areas.load("items");
-          }
-          autoColorProbe("27 before-sync-area-items", {
-            targetIndex,
-            offset,
-          });
+          autoColorProbe("27 before-sync-area-payloads", { targetIndex, offset });
           await context.sync();
-          autoColorProbe("28 after-sync-area-items", {
-            targetIndex,
-            offset,
-            formulaAreaCount: formulaCells.isNullObject ? 0 : formulaCells.areas.items.length,
-            constantAreaCount: constantCells.isNullObject ? 0 : constantCells.areas.items.length,
-            textAreaCount: textConstantCells.isNullObject
-              ? 0
-              : textConstantCells.areas.items.length,
-          });
 
-          const formulaAreas = formulaCells.isNullObject ? [] : formulaCells.areas.items;
-          const constantAreas = constantCells.isNullObject ? [] : constantCells.areas.items;
+          const formulaPayloads = formulaCells.isNullObject ? [] : formulaCells.areas.items;
+          const constantPayloads = constantCells.isNullObject ? [] : constantCells.areas.items;
           const textAreas = textConstantCells.isNullObject ? [] : textConstantCells.areas.items;
-
-          const formulaPayloads = formulaAreas.map((range) => {
-            range.load([
-              "rowCount",
-              "columnCount",
-              "rowIndex",
-              "columnIndex",
-              "values",
-              "formulas",
-              "numberFormat",
-            ]);
-            range.worksheet.load("name");
-            return range;
-          });
-
-          const constantPayloads = constantAreas.map((range) => {
-            range.load([
-              "rowCount",
-              "columnCount",
-              "rowIndex",
-              "columnIndex",
-              "values",
-              "formulas",
-              "numberFormat",
-            ]);
-            range.worksheet.load("name");
-            return range;
-          });
-
-          const textHyperlinkPayloads = textAreas.map((range) => {
-            range.load(["rowCount", "columnCount", "rowIndex", "columnIndex"]);
-            range.worksheet.load("name");
-            return range.getCellProperties({
-              hyperlink: true,
-            });
-          });
-
-          autoColorProbe("29 before-sync-payload-load", {
+          autoColorProbe("28 after-sync-area-payloads", {
             targetIndex,
             offset,
-            formulaAreas: formulaAreas.length,
-            constantAreas: constantAreas.length,
-            textAreas: textAreas.length,
+            formulaAreaCount: formulaPayloads.length,
+            constantAreaCount: constantPayloads.length,
+            textAreaCount: textAreas.length,
           });
-          await context.sync();
-          autoColorProbe("30 after-sync-payload-load", {
-            targetIndex,
-            offset,
-          });
+
+          // Hyperlinks only live on text cells and need per-area cell properties,
+          // so this extra round trip happens only when the chunk has text.
+          const textHyperlinkPayloads = textAreas.map((range) =>
+            range.getCellProperties({ hyperlink: true })
+          );
+          if (textAreas.length > 0) {
+            autoColorProbe("29 before-sync-hyperlinks", { targetIndex, offset });
+            await context.sync();
+            autoColorProbe("30 after-sync-hyperlinks", { targetIndex, offset });
+          }
 
           for (const area of formulaPayloads) {
-            pushAutoColorSnapshots(area, false, snapshots, snapshotByKey);
+            pushAutoColorSnapshots(area, target.worksheetName, false, snapshots, snapshotByKey);
           }
 
           for (const area of constantPayloads) {
-            pushAutoColorSnapshots(area, true, snapshots, snapshotByKey);
+            pushAutoColorSnapshots(area, target.worksheetName, true, snapshots, snapshotByKey);
           }
 
           for (let textIndex = 0; textIndex < textAreas.length; textIndex += 1) {
             const area = textAreas[textIndex];
             const props = textHyperlinkPayloads[textIndex].value;
-            markHyperlinks(area, props, snapshotByKey);
+            markHyperlinks(area, target.worksheetName, props, snapshotByKey);
           }
           autoColorProbe("31 chunk-complete", {
             targetIndex,
@@ -488,9 +488,11 @@ export class ExcelPortLive implements ExcelPort {
       for (const [groupKey, addresses] of fontColorGroups) {
         const [sheetName, color] = groupKey.split("|");
         const worksheet = sheetFor(sheetName);
-        for (const chunk of chunkArray(addresses, ExcelPortLive.FONT_COLOR_WRITE_CHUNK_SIZE)) {
-          const refs = chunk.map((address) => toWorksheetScopedAddress(address)).join(",");
-          worksheet.getRanges(refs).format.font.color = color;
+        // Collapse cells into rectangles first: a column of 500 formulas
+        // becomes one "B2:B501" instead of 500 addresses for Excel to parse.
+        const refs = coalesceCells(addresses).map(rectToA1);
+        for (const chunk of chunkByLength(refs, ExcelPortLive.ADDRESS_LIST_MAX_CHARS)) {
+          worksheet.getRanges(chunk.join(",")).format.font.color = color;
         }
       }
 
@@ -519,6 +521,68 @@ export class ExcelPortLive implements ExcelPort {
   }
 }
 
+const FORMATTING_PROPERTY_SPEC: Excel.CellPropertiesLoadOptions = {
+  hyperlink: true,
+  format: {
+    fill: {
+      color: true,
+      pattern: true,
+    },
+    font: {
+      name: true,
+      size: true,
+      color: true,
+      bold: true,
+      italic: true,
+      underline: true,
+      strikethrough: true,
+    },
+    borders: {
+      color: true,
+      style: true,
+    },
+  },
+};
+
+function toFormattingSnapshot(
+  address: CellAddress,
+  numberFormat: string,
+  cellProp: Excel.CellProperties
+): CellFormattingSnapshot {
+  const format = cellProp.format;
+  const borders = format?.borders;
+  return {
+    address,
+    numberFormat,
+    hasHyperlink: hasCellHyperlink(cellProp.hyperlink),
+    fillPattern: format?.fill?.pattern ?? null,
+    fillColor: format?.fill?.color ?? null,
+    fontName: format?.font?.name ?? null,
+    fontSize: typeof format?.font?.size === "number" ? format.font.size : null,
+    fontColor: format?.font?.color ?? null,
+    fontBold: typeof format?.font?.bold === "boolean" ? format.font.bold : null,
+    fontItalic: typeof format?.font?.italic === "boolean" ? format.font.italic : null,
+    fontUnderline:
+      typeof format?.font?.underline === "string" ? format.font.underline !== "None" : null,
+    fontStrikethrough:
+      typeof format?.font?.strikethrough === "boolean" ? format.font.strikethrough : null,
+    edgeLeftStyle: borders?.left?.style ?? null,
+    edgeTopStyle: borders?.top?.style ?? null,
+    edgeBottomStyle: borders?.bottom?.style ?? null,
+    edgeRightStyle: borders?.right?.style ?? null,
+    edgeLeftColor: borders?.left?.color ?? null,
+    edgeTopColor: borders?.top?.color ?? null,
+    edgeBottomColor: borders?.bottom?.color ?? null,
+    edgeRightColor: borders?.right?.color ?? null,
+  };
+}
+
+/** Repeats one value over a rows x cols grid (fallback when a scalar write is rejected). */
+function fillGrid<T>(value: T, rows: number, cols: number): T[][] {
+  const row = new Array<T>(cols).fill(value);
+  return Array.from({ length: rows }, () => row);
+}
+
 async function getSelectedAreas(context: Excel.RequestContext): Promise<Excel.Range[]> {
   const selectedRanges = context.workbook.getSelectedRanges();
   const areas = selectedRanges.areas;
@@ -541,28 +605,20 @@ function cellKey(address: CellAddress): string {
   return `${address.sheet}!${address.row},${address.col}`;
 }
 
-function toWorksheetScopedAddress(address: CellAddress): string {
-  return `${columnIndexToLetters(address.col)}${address.row + 1}`;
-}
-
-function columnIndexToLetters(columnIndex: number): string {
-  let remainder = columnIndex + 1;
-  let letters = "";
-
-  while (remainder > 0) {
-    const zeroBased = (remainder - 1) % 26;
-    letters = String.fromCharCode(65 + zeroBased) + letters;
-    remainder = Math.floor((remainder - 1) / 26);
+function chunkByLength(refs: string[], maxChars: number): string[][] {
+  const chunks: string[][] = [];
+  let current: string[] = [];
+  let length = 0;
+  for (const ref of refs) {
+    if (current.length > 0 && length + ref.length + 1 > maxChars) {
+      chunks.push(current);
+      current = [];
+      length = 0;
+    }
+    current.push(ref);
+    length += ref.length + 1;
   }
-
-  return letters;
-}
-
-function chunkArray<T>(items: T[], chunkSize: number): T[][] {
-  const chunks: T[][] = [];
-  for (let index = 0; index < items.length; index += chunkSize) {
-    chunks.push(items.slice(index, index + chunkSize));
-  }
+  if (current.length > 0) chunks.push(current);
   return chunks;
 }
 
@@ -580,113 +636,43 @@ async function resolveAutoColorTargetRanges(
   worksheetCache: Map<string, Excel.Worksheet>
 ): Promise<AutoColorTargetRange[]> {
   autoColorProbe("50 resolveTargetRanges.enter");
-  const selectedRange = context.workbook.getSelectedRange();
-  selectedRange.load(["rowCount", "columnCount"]);
-  autoColorProbe("51 before-sync-selection-shape");
+  // The selection always lives on the active sheet, so the areas, the sheet
+  // name and its used range come back in a single round trip. (This also
+  // handles multi-area selections, where getSelectedRange() would throw, and
+  // whole-sheet selections, whose intersection with the used range is the
+  // used range itself.)
+  const areas = context.workbook.getSelectedRanges().areas;
+  areas.load(["rowIndex", "columnIndex", "rowCount", "columnCount"]);
+  const worksheet = context.workbook.worksheets.getActiveWorksheet();
+  worksheet.load("name");
+  const usedRange = worksheet.getUsedRangeOrNullObject(true);
+  usedRange.load(["isNullObject", "rowIndex", "columnIndex", "rowCount", "columnCount"]);
   await context.sync();
-  autoColorProbe("52 after-sync-selection-shape", {
-    selectedRangeRowCount: selectedRange.rowCount,
-    selectedRangeColumnCount: selectedRange.columnCount,
+  autoColorProbe("51 after-sync-selection-and-used-range", {
+    areaCount: areas.items.length,
+    usedRangeIsNull: usedRange.isNullObject,
   });
 
-  const isWholeSheetSelection =
-    selectedRange.rowCount === 1048576 && selectedRange.columnCount === 16384;
-  autoColorProbe("53 whole-sheet-check", {
-    isWholeSheetSelection,
-  });
-
-  if (isWholeSheetSelection) {
-    const worksheet = context.workbook.worksheets.getActiveWorksheet();
-    const usedRange = worksheet.getUsedRangeOrNullObject(true);
-    usedRange.load(["isNullObject", "rowIndex", "columnIndex", "rowCount", "columnCount"]);
-    autoColorProbe("54 before-sync-whole-sheet-used-range");
-    await context.sync();
-    autoColorProbe("55 after-sync-whole-sheet-used-range", {
-      isNullObject: usedRange.isNullObject,
-      rowIndex: usedRange.isNullObject ? null : usedRange.rowIndex,
-      columnIndex: usedRange.isNullObject ? null : usedRange.columnIndex,
-      rowCount: usedRange.isNullObject ? 0 : usedRange.rowCount,
-      columnCount: usedRange.isNullObject ? 0 : usedRange.columnCount,
-    });
-
-    if (usedRange.isNullObject || usedRange.rowCount === 0 || usedRange.columnCount === 0) {
-      autoColorProbe("56 resolveTargetRanges.return-empty-whole-sheet");
-      return [];
-    }
-
-    const targetRanges = [
-      {
-        worksheet,
-        worksheetName: worksheet.name,
-        rowIndex: usedRange.rowIndex,
-        columnIndex: usedRange.columnIndex,
-        rowCount: usedRange.rowCount,
-        columnCount: usedRange.columnCount,
-      },
-    ];
-    autoColorProbe("57 resolveTargetRanges.return-whole-sheet", {
-      count: targetRanges.length,
-    });
-    return targetRanges;
+  if (usedRange.isNullObject) {
+    return [];
   }
-
-  const selectionAreas = await getSelectedAreas(context);
-
-  for (const area of selectionAreas) {
-    area.load(["rowIndex", "columnIndex", "rowCount", "columnCount"]);
-    area.worksheet.load("name");
-  }
-  autoColorProbe("58 before-sync-selection-areas");
-  await context.sync();
-  autoColorProbe("59 after-sync-selection-areas", {
-    selectionAreaCount: selectionAreas.length,
-  });
-
-  const usedRanges = selectionAreas.map((selectionArea) => {
-    const usedRange = selectionArea.worksheet.getUsedRangeOrNullObject(true);
-    usedRange.load(["isNullObject", "rowIndex", "columnIndex", "rowCount", "columnCount"]);
-    return usedRange;
-  });
-  autoColorProbe("60 before-sync-area-used-ranges");
-  await context.sync();
-  autoColorProbe("61 after-sync-area-used-ranges", {
-    count: usedRanges.length,
-  });
+  worksheetCache.set(worksheet.name, worksheet);
 
   const targetRanges: AutoColorTargetRange[] = [];
-  for (let areaIndex = 0; areaIndex < selectionAreas.length; areaIndex += 1) {
-    const selectionArea = selectionAreas[areaIndex];
-    const usedRange = usedRanges[areaIndex];
-
-    if (usedRange.isNullObject) {
-      continue;
-    }
-
-    const rowStart = Math.max(selectionArea.rowIndex, usedRange.rowIndex);
-    const columnStart = Math.max(selectionArea.columnIndex, usedRange.columnIndex);
-    const rowEnd = Math.min(
-      selectionArea.rowIndex + selectionArea.rowCount,
-      usedRange.rowIndex + usedRange.rowCount
-    );
+  for (const area of areas.items) {
+    const rowStart = Math.max(area.rowIndex, usedRange.rowIndex);
+    const columnStart = Math.max(area.columnIndex, usedRange.columnIndex);
+    const rowEnd = Math.min(area.rowIndex + area.rowCount, usedRange.rowIndex + usedRange.rowCount);
     const columnEnd = Math.min(
-      selectionArea.columnIndex + selectionArea.columnCount,
+      area.columnIndex + area.columnCount,
       usedRange.columnIndex + usedRange.columnCount
     );
-
     if (rowStart >= rowEnd || columnStart >= columnEnd) {
       continue;
     }
-
-    const worksheetName = selectionArea.worksheet.name;
-    let worksheet = worksheetCache.get(worksheetName);
-    if (!worksheet) {
-      worksheet = context.workbook.worksheets.getItem(worksheetName);
-      worksheetCache.set(worksheetName, worksheet);
-    }
-
     targetRanges.push({
       worksheet,
-      worksheetName,
+      worksheetName: worksheet.name,
       rowIndex: rowStart,
       columnIndex: columnStart,
       rowCount: rowEnd - rowStart,
@@ -694,14 +680,13 @@ async function resolveAutoColorTargetRanges(
     });
   }
 
-  autoColorProbe("62 resolveTargetRanges.return", {
-    count: targetRanges.length,
-  });
+  autoColorProbe("62 resolveTargetRanges.return", { count: targetRanges.length });
   return targetRanges;
 }
 
 function pushAutoColorSnapshots(
   area: Excel.Range,
+  sheetName: string,
   includeConstants: boolean,
   snapshots: AutoColorCellSnapshot[],
   snapshotByKey: Map<string, AutoColorCellSnapshot>
@@ -724,7 +709,7 @@ function pushAutoColorSnapshots(
       }
 
       const address: CellAddress = {
-        sheet: area.worksheet.name,
+        sheet: sheetName,
         row: area.rowIndex + r,
         col: area.columnIndex + c,
       };
@@ -747,13 +732,14 @@ function pushAutoColorSnapshots(
 
 function markHyperlinks(
   area: Excel.Range,
+  sheetName: string,
   props: Excel.CellProperties[][],
   snapshotByKey: Map<string, AutoColorCellSnapshot>
 ): void {
   for (let r = 0; r < area.rowCount; r += 1) {
     for (let c = 0; c < area.columnCount; c += 1) {
       const address: CellAddress = {
-        sheet: area.worksheet.name,
+        sheet: sheetName,
         row: area.rowIndex + r,
         col: area.columnIndex + c,
       };

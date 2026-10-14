@@ -1,4 +1,4 @@
-import { CellMutation, ExcelPort } from "../adapters/excelPort";
+import { ExcelPort } from "../adapters/excelPort";
 import {
   computeNextNumberFormat,
   DEFAULT_NUMBER_FORMATS,
@@ -15,17 +15,12 @@ export async function runCycleNumberFormat(
   port: ExcelPort,
   configuredFormats: NumberFormatDefinition[] = DEFAULT_NUMBER_FORMATS
 ): Promise<void> {
-  const snaps = await port.getSelectionFormatting();
-  if (snaps.length === 0) return;
+  // Only number formats are read (no fonts/fills/borders), and the new code
+  // is written to the whole selection in one call.
+  const summary = await port.getSelectionNumberFormats();
+  if (!summary) return;
 
-  const formats = snaps.map((s) => s.numberFormat);
-  const mixed = hasMixedNumberFormats(formats);
-  const nextFormat = computeNextNumberFormat(formats[0], mixed, configuredFormats);
-
-  const mutations: CellMutation[] = snaps.map((s) => ({
-    address: s.address,
-    kind: "numberFormat",
-    format: nextFormat,
-  }));
-  await port.applyMutations(mutations);
+  const mixed = hasMixedNumberFormats(summary.formats);
+  const nextFormat = computeNextNumberFormat(summary.formats[0], mixed, configuredFormats);
+  await port.applySelectionNumberFormat(nextFormat);
 }

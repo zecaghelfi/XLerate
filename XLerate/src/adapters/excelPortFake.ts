@@ -109,6 +109,29 @@ export class ExcelPortFake implements ExcelPort {
     });
   }
 
+  async getSelectionNumberFormats(): Promise<{ formats: string[]; scanned: boolean } | null> {
+    if (this.selection.length === 0) return null;
+    const formats: string[] = [];
+    for (const address of this.selection) {
+      const fmt = (this.formatting.get(key(address)) ?? defaultFormatting()).numberFormat;
+      if (!formats.includes(fmt)) formats.push(fmt);
+    }
+    return { formats, scanned: true };
+  }
+
+  async applySelectionNumberFormat(format: string): Promise<void> {
+    await this.applyMutations(
+      this.selection.map((address) => ({ address, kind: "numberFormat" as const, format }))
+    );
+  }
+
+  async getSelectionFirstCellFormatting(): Promise<CellFormattingSnapshot | null> {
+    const address = this.selection[0];
+    if (!address) return null;
+    const fmt = this.formatting.get(key(address)) ?? defaultFormatting();
+    return { address, ...fmt };
+  }
+
   async getActiveCellLeftRowSnapshot(): Promise<ActiveCellLeftRowSnapshot> {
     const activeCell = this.selection[0] ?? { sheet: "Sheet1", row: 0, col: 0 };
     const leftCells = Array.from({ length: activeCell.col }, (_, index) => {

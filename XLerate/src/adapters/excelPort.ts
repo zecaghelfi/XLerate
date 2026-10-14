@@ -163,6 +163,24 @@ export interface ExcelPort {
   applySelectionFormatBundle(format: CellFormatMutation): Promise<void>;
 
   /**
+   * Distinct number-format codes in the selection, first cell's code first.
+   * Cheap path for the number/percent/date cycles: reads only numberFormat
+   * (never fonts/fills/borders) and stops scanning very large selections, in
+   * which case `scanned` is false and only the first cell was read.
+   * Returns null when nothing is selected.
+   */
+  getSelectionNumberFormats(): Promise<{ formats: string[]; scanned: boolean } | null>;
+
+  /** Apply one number format to the whole selection in a single Excel call. */
+  applySelectionNumberFormat(format: string): Promise<void>;
+
+  /**
+   * Formatting of the first selected cell only. The cell/text cycles decide
+   * the next preset from this cell, so loading the whole selection is waste.
+   */
+  getSelectionFirstCellFormatting(): Promise<CellFormattingSnapshot | null>;
+
+  /**
    * Remove all fill color from every cell on the named sheet. Used by
    * Clear Consistency Marks (spec §3.6). Single Excel undo step.
    */

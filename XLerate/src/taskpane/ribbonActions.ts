@@ -14,7 +14,6 @@ import {
   beginAutoColorProbeSession,
   endAutoColorProbeSession,
 } from "../adapters/autoColorProbe";
-import { computeNextDateFormat, hasMixedDateFormats } from "../core/dateFormatCycle";
 import { runAutoColor as runAutoColorService } from "../services/autoColor.service";
 import { runInsertCagr as runInsertCagrService } from "../services/cagr.service";
 import { runCycleCellFormat as runCycleCellFormatService } from "../services/cycleCellFormat.service";
@@ -104,41 +103,9 @@ async function runCycleNumberFormatFromRibbon(event: Office.AddinCommands.Event)
 }
 
 async function runCycleDateFormatFromRibbon(event: Office.AddinCommands.Event): Promise<void> {
-  await finish(event, async () => {
+  await finish(event, () => {
     const settings = readWorkbookFormatSettings();
-    const port = new ExcelPortLive();
-    const before = await port.getSelectionFormatting();
-    const beforeFormats = before.map((snap) => ({
-      address: `${snap.address.sheet}!R${snap.address.row}C${snap.address.col}`,
-      numberFormat: snap.numberFormat,
-    }));
-    const mixed = hasMixedDateFormats(before.map((snap) => snap.numberFormat));
-    const nextFormat =
-      before.length > 0
-        ? computeNextDateFormat(before[0].numberFormat, mixed, settings.dateFormats)
-        : null;
-
-    // eslint-disable-next-line no-console
-    console.log("[xlerate-date-debug] before", {
-      configuredDateFormats: settings.dateFormats.map((item) => ({
-        name: item.name,
-        formatCode: item.formatCode,
-      })),
-      selection: beforeFormats,
-      mixedSelection: mixed,
-      computedNextFormat: nextFormat,
-    });
-
-    await runCycleDateFormatService(port, settings.dateFormats);
-
-    const after = await port.getSelectionFormatting();
-    // eslint-disable-next-line no-console
-    console.log("[xlerate-date-debug] after", {
-      selection: after.map((snap) => ({
-        address: `${snap.address.sheet}!R${snap.address.row}C${snap.address.col}`,
-        numberFormat: snap.numberFormat,
-      })),
-    });
+    return runCycleDateFormatService(new ExcelPortLive(), settings.dateFormats);
   });
 }
 
@@ -161,7 +128,27 @@ async function runCycleTextStyleFromRibbon(event: Office.AddinCommands.Event): P
   });
 }
 
+/**
+ * The auto-color probe writes every step to localStorage and the console,
+ * which is slow; it only runs when debugging is switched on with
+ * localStorage["xlerate.debug"] = "1" in the taskpane DevTools.
+ */
+function isDebugEnabled(): boolean {
+  try {
+    return window.localStorage.getItem("xlerate.debug") === "1";
+  } catch {
+    return false;
+  }
+}
+
 async function runAutoColorFromRibbon(event: Office.AddinCommands.Event): Promise<void> {
+  if (!isDebugEnabled()) {
+    await finish(event, () => {
+      const settings = readWorkbookFormatSettings();
+      return runAutoColorService(new ExcelPortLive(), settings.autoColorPalette);
+    });
+    return;
+  }
   beginAutoColorProbeSession();
   autoColorProbe("01 handler-enter");
   try {

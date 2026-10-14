@@ -52,14 +52,8 @@ export async function runCycleTextStyle(
   currentIndex: number,
   configuredStyles: TextStyleDefinition[] = DEFAULT_TEXT_STYLES
 ): Promise<{ index: number; style: TextStyleDefinition }> {
-  const snaps = await port.getSelectionFormatting();
-  if (snaps.length === 0) {
-    return {
-      index: currentIndex,
-      style: configuredStyles[Math.max(currentIndex, 0)],
-    };
-  }
-
+  // Text styles cycle by a session index, so nothing needs to be read from
+  // the sheet: one write call per press.
   const { index, style } = computeNextTextStyle(currentIndex, configuredStyles);
   const mutation = styleToMutation(style);
   await port.applySelectionFormatBundle(mutation);

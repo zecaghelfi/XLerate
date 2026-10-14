@@ -1,4 +1,4 @@
-import { CellMutation, ExcelPort } from "../adapters/excelPort";
+import { ExcelPort } from "../adapters/excelPort";
 import {
   computeNextDateFormat,
   DateFormatDefinition,
@@ -14,17 +14,10 @@ export async function runCycleDateFormat(
   port: ExcelPort,
   configuredFormats: DateFormatDefinition[] = DEFAULT_DATE_FORMATS
 ): Promise<void> {
-  const snaps = await port.getSelectionFormatting();
-  if (snaps.length === 0) return;
+  const summary = await port.getSelectionNumberFormats();
+  if (!summary) return;
 
-  const formats = snaps.map((s) => s.numberFormat);
-  const mixed = hasMixedDateFormats(formats);
-  const nextFormat = computeNextDateFormat(formats[0], mixed, configuredFormats);
-
-  const mutations: CellMutation[] = snaps.map((s) => ({
-    address: s.address,
-    kind: "numberFormat",
-    format: nextFormat,
-  }));
-  await port.applyMutations(mutations);
+  const mixed = hasMixedDateFormats(summary.formats);
+  const nextFormat = computeNextDateFormat(summary.formats[0], mixed, configuredFormats);
+  await port.applySelectionNumberFormat(nextFormat);
 }

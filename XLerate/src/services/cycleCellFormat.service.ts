@@ -66,10 +66,11 @@ export async function runCycleCellFormat(
   port: ExcelPort,
   configuredFormats: CellFormatDefinition[] = DEFAULT_CELL_FORMATS
 ): Promise<void> {
-  const snaps = await port.getSelectionFormatting();
-  if (snaps.length === 0) return;
+  // The next preset is decided by the first cell only: read just that cell.
+  const first = await port.getSelectionFirstCellFormatting();
+  if (!first) return;
 
-  const state = snapshotToState(snaps[0]);
+  const state = snapshotToState(first);
   const next = computeNextCellFormat(state, configuredFormats);
   const mutation = definitionToMutation(next);
   await port.applySelectionFormatBundle(mutation);

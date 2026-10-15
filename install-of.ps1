@@ -10,7 +10,7 @@ $manifest = Join-Path $dir 'manifest-of.xml'
 Invoke-WebRequest -UseBasicParsing -Uri 'https://zecaghelfi.github.io/XLerate/manifest.xml' -OutFile $manifest
 [xml]$x = Get-Content -Raw $manifest
 $id = $x.OfficeApp.Id
-if ($x.OfficeApp.SourceLocation.DefaultValue -notlike 'https://zecaghelfi.github.io/*') {
+if ($x.OfficeApp.DefaultSettings.SourceLocation.DefaultValue -notlike 'https://zecaghelfi.github.io/*') {
   throw "O site ainda serve o manifesto antigo. Espere o deploy do GitHub Pages terminar e rode de novo."
 }
 

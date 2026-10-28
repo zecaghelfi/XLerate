@@ -489,6 +489,29 @@ textarea:focus-visible {
   background: rgba(255, 255, 255, 0.08);
 }
 
+/* "Add from cell" + "Add": the header's > div rule would otherwise shrink them. */
+.accordion-panel-header > .accordion-panel-actions {
+  flex: 0 0 auto;
+  display: flex;
+  gap: 6px;
+}
+
+/* "Copy from selected cell" bar at the top of an open preset. */
+.copy-from-cell {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--border-strong);
+}
+
+.copy-from-cell .field-help {
+  flex: 1 1 160px;
+  color: var(--muted);
+}
+
 .accordion-list {
   display: grid;
 }

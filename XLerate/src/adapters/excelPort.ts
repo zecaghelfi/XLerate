@@ -1,3 +1,5 @@
+import type { CellFormatCapture } from "../core/formatCapture";
+
 /**
  * Boundary between domain code and Excel. Services depend on this interface,
  * never on Office.js directly. The live implementation is the only place
@@ -179,6 +181,15 @@ export interface ExcelPort {
    * the next preset from this cell, so loading the whole selection is waste.
    */
   getSelectionFirstCellFormatting(): Promise<CellFormattingSnapshot | null>;
+
+  /**
+   * Full formatting of the first selected cell for the settings panel's
+   * "Copy from selected cell": number format, font, fill and all border edges
+   * with line weight. Inside edges are read from the first selected area when
+   * it spans several rows/columns, and are null otherwise.
+   * Returns null when nothing is selected.
+   */
+  getSelectionFormatCapture(): Promise<CellFormatCapture | null>;
 
   /**
    * Remove all fill color from every cell on the named sheet. Used by

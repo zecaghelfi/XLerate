@@ -8,6 +8,7 @@ import {
   CellSnapshot,
   ExcelPort,
 } from "./excelPort";
+import { emptyCapture, type CellFormatCapture } from "../core/formatCapture";
 
 type FakeCellState =
   | { kind: "empty" }
@@ -130,6 +131,35 @@ export class ExcelPortFake implements ExcelPort {
     if (!address) return null;
     const fmt = this.formatting.get(key(address)) ?? defaultFormatting();
     return { address, ...fmt };
+  }
+
+  async getSelectionFormatCapture(): Promise<CellFormatCapture | null> {
+    const address = this.selection[0];
+    if (!address) return null;
+    const fmt = this.formatting.get(key(address)) ?? defaultFormatting();
+    const edge = (style: string | null, color: string | null) =>
+      style === null ? null : { style, weight: null, color };
+    const capture = emptyCapture();
+    return {
+      ...capture,
+      numberFormat: fmt.numberFormat,
+      fontName: fmt.fontName,
+      fontSize: fmt.fontSize,
+      fontColor: fmt.fontColor,
+      bold: fmt.fontBold,
+      italic: fmt.fontItalic,
+      underline: fmt.fontUnderline,
+      strikethrough: fmt.fontStrikethrough,
+      fillPattern: fmt.fillPattern,
+      fillColor: fmt.fillColor,
+      edges: {
+        ...capture.edges,
+        borderTop: edge(fmt.edgeTopStyle, fmt.edgeTopColor),
+        borderBottom: edge(fmt.edgeBottomStyle, fmt.edgeBottomColor),
+        borderLeft: edge(fmt.edgeLeftStyle, fmt.edgeLeftColor),
+        borderRight: edge(fmt.edgeRightStyle, fmt.edgeRightColor),
+      },
+    };
   }
 
   async getActiveCellLeftRowSnapshot(): Promise<ActiveCellLeftRowSnapshot> {

@@ -35,6 +35,12 @@ import {
   textStyleEdges,
   type TextStyleDefinition,
 } from "../core/textStyleCycle";
+import {
+  captureToCellFormat,
+  captureToFormatCode,
+  captureToTextStyle,
+  type CellFormatCapture,
+} from "../core/formatCapture";
 import { initColorPicker, renderColorControl } from "./colorPicker";
 import { MAX_TRACE_MAX_DEPTH, MAX_TRACE_SAFETY_LIMIT } from "../core/traceUtils";
 
@@ -57,6 +63,8 @@ type SettingsWorkspaceOptions = {
   exportSettings: (settings: ResolvedFormatSettings) => Promise<void>;
   saveSettings: (settings: ResolvedFormatSettings) => Promise<void>;
   onStatus: (message: string) => void;
+  /** Reads the selected cell's formatting for "Copy from selected cell". Omitted = buttons hidden. */
+  captureSelectionFormat?: () => Promise<CellFormatCapture | null>;
 };
 
 type SettingsWorkspaceState = {
@@ -443,6 +451,57 @@ function renderTextStylePreview(item: TextStyleDefinition): string {
   ].join(" ");
 
   return `<div class="mini-preview text-style-preview" style="${style}">Sample</div>`;
+}
+
+/**
+ * Overwrites preset `index` of `tab` with the selected cell's formatting
+ * (name kept). Returns the notes about anything that could not be copied.
+ */
+function applyCaptureToPreset(
+  state: SettingsWorkspaceState,
+  tab: ListTabKey,
+  index: number,
+  capture: CellFormatCapture
+): string[] {
+  switch (tab) {
+    case "numberFormats":
+    case "percentFormats":
+    case "dateFormats": {
+      const items = state.draft[tab];
+      const result = captureToFormatCode(capture, items[index]);
+      items[index] = result.preset;
+      return result.notes;
+    }
+    case "cellFormats": {
+      const result = captureToCellFormat(capture, state.draft.cellFormats[index]);
+      state.draft.cellFormats[index] = result.preset;
+      return result.notes;
+    }
+    case "textStyles": {
+      const result = captureToTextStyle(capture, state.draft.textStyles[index]);
+      state.draft.textStyles[index] = result.preset;
+      return result.notes;
+    }
+  }
+}
+
+const COPY_FROM_CELL_HELP: Record<ListTabKey, string> = {
+  numberFormats: "Copies the number format code of the selected cell.",
+  percentFormats: "Copies the number format code of the selected cell.",
+  dateFormats: "Copies the number format code of the selected cell.",
+  cellFormats:
+    "Copies fill, font color, bold/italic/underline/strike and borders. Select a block to copy inside borders too.",
+  textStyles: "Copies font, size, color, bold/italic/underline, fill and borders.",
+};
+
+function renderCopyFromCellBar(tab: ListTabKey, enabled: boolean): string {
+  if (!enabled) return "";
+  return `
+    <div class="copy-from-cell">
+      <button type="button" class="secondary-btn compact-btn" data-action="copy-from-cell">Copy from selected cell</button>
+      <span class="field-help">${escapeHtml(COPY_FROM_CELL_HELP[tab])} The preset name is kept.</span>
+    </div>
+  `;
 }
 
 function renderField(label: string, control: string, helpText?: string, wide = false): string {
@@ -926,17 +985,21 @@ function renderTraceEditor(settings: ResolvedFormatSettings["trace"]): string {
   `;
 }
 
-function renderDetailContent(state: SettingsWorkspaceState, tab: SettingsTabKey): string {
+function renderDetailContent(
+  state: SettingsWorkspaceState,
+  tab: SettingsTabKey,
+  canCopyFromCell = false
+): string {
   switch (tab) {
     case "numberFormats":
     case "percentFormats":
-      return renderExpandablePresetList(state, tab);
+      return renderExpandablePresetList(state, tab, canCopyFromCell);
     case "dateFormats":
-      return renderExpandablePresetList(state, tab);
+      return renderExpandablePresetList(state, tab, canCopyFromCell);
     case "cellFormats":
-      return renderExpandablePresetList(state, tab);
+      return renderExpandablePresetList(state, tab, canCopyFromCell);
     case "textStyles":
-      return renderExpandablePresetList(state, tab);
+      return renderExpandablePresetList(state, tab, canCopyFromCell);
     case "autoColorPalette":
       return `<div class="detail-grid detail-grid-single">${renderPaletteEditor(state.draft.autoColorPalette)}</div>`;
     case "trace":
@@ -963,7 +1026,11 @@ function renderExpandablePresetEditor(
   }
 }
 
-function renderExpandablePresetList(state: SettingsWorkspaceState, tab: ListTabKey): string {
+function renderExpandablePresetList(
+  state: SettingsWorkspaceState,
+  tab: ListTabKey,
+  canCopyFromCell = false
+): string {
   const items = getListItems(state, tab);
   const openIndex = state.selectedIndex[tab];
 
@@ -975,7 +1042,10 @@ function renderExpandablePresetList(state: SettingsWorkspaceState, tab: ListTabK
             <p class="section-kicker">Presets</p>
             <h3>${escapeHtml(TAB_META[tab].title)}</h3>
           </div>
-          <button type="button" class="secondary-btn compact-btn" data-action="add-item">Add</button>
+          <div class="accordion-panel-actions">
+            ${canCopyFromCell ? `<button type="button" class="secondary-btn compact-btn" data-action="add-from-cell" title="New preset with the selected cell's formatting">Add from cell</button>` : ""}
+            <button type="button" class="secondary-btn compact-btn" data-action="add-item">Add</button>
+          </div>
         </div>
         <div class="accordion-list">
           ${items
@@ -1010,6 +1080,7 @@ function renderExpandablePresetList(state: SettingsWorkspaceState, tab: ListTabK
                     isOpen
                       ? `
                         <div class="accordion-item-body">
+                          ${renderCopyFromCellBar(tab, canCopyFromCell)}
                           ${renderExpandablePresetEditor(state, tab, index)}
                         </div>
                       `
@@ -1079,7 +1150,11 @@ function renderIndex(state: SettingsWorkspaceState): string {
   `;
 }
 
-function renderDetail(state: SettingsWorkspaceState, tab: SettingsTabKey): string {
+function renderDetail(
+  state: SettingsWorkspaceState,
+  tab: SettingsTabKey,
+  canCopyFromCell = false
+): string {
   const dirty = serializeSettings(state.draft) !== serializeSettings(state.savedSnapshot);
   const validationError = getFormatSettingsValidationError(state.draft);
 
@@ -1111,18 +1186,18 @@ function renderDetail(state: SettingsWorkspaceState, tab: SettingsTabKey): strin
             <span class="state-pill">${escapeHtml(getSectionSummary(state, tab))}</span>
             ${validationError ? `<span class="state-pill warning-pill">${escapeHtml(validationError)}</span>` : ""}
           </div>
-          ${renderDetailContent(state, tab)}
+          ${renderDetailContent(state, tab, canCopyFromCell)}
         </div>
       </section>
     </div>
   `;
 }
 
-function renderWorkspace(state: SettingsWorkspaceState): string {
+function renderWorkspace(state: SettingsWorkspaceState, canCopyFromCell = false): string {
   normalizeSelection(state);
   return state.currentView === "index"
     ? renderIndex(state)
-    : renderDetail(state, state.currentView);
+    : renderDetail(state, state.currentView, canCopyFromCell);
 }
 
 export function initSettingsWorkspace(options: SettingsWorkspaceOptions): void {
@@ -1145,7 +1220,7 @@ export function initSettingsWorkspace(options: SettingsWorkspaceOptions): void {
   };
 
   const render = (): void => {
-    root.innerHTML = renderWorkspace(state);
+    root.innerHTML = renderWorkspace(state, Boolean(options.captureSelectionFormat));
   };
 
   initColorPicker(root);
@@ -1209,6 +1284,29 @@ export function initSettingsWorkspace(options: SettingsWorkspaceOptions): void {
       addPreset(state, state.currentView);
       options.onStatus(`${TAB_META[state.currentView].title.slice(0, -1)} preset added.`);
       render();
+      return;
+    }
+
+    if ((action === "copy-from-cell" || action === "add-from-cell") && isListTab(state.currentView)) {
+      const capture = options.captureSelectionFormat;
+      if (!capture) return;
+      const tab = state.currentView;
+      void runAsync(async () => {
+        const captured = await capture();
+        if (!captured) {
+          options.onStatus("Select a cell in the sheet first, then click again.");
+          return;
+        }
+        if (action === "add-from-cell") addPreset(state, tab);
+        const index = state.selectedIndex[tab];
+        if (index === null) return;
+        const notes = applyCaptureToPreset(state, tab, index, captured);
+        const name = String(getListItems(state, tab)[index].name);
+        options.onStatus(
+          [`"${name}" now uses the selected cell's formatting. Save Settings to keep it.`, ...notes].join(" ")
+        );
+        render();
+      });
       return;
     }
 

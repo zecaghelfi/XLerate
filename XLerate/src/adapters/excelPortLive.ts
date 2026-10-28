@@ -14,6 +14,11 @@ import {
 } from "./excelPort";
 import { autoColorProbe } from "./autoColorProbe";
 import { coalesceCells, rectToA1 } from "../core/rangeCoalesce";
+import {
+  emptyCapture,
+  type CapturedBorderEdge,
+  type CellFormatCapture,
+} from "../core/formatCapture";
 
 /**
  * The only place in the codebase that imports Office.js from domain code.
@@ -211,6 +216,61 @@ export class ExcelPortLive implements ExcelPort {
         String(cell.numberFormat?.[0]?.[0] ?? "General"),
         props.value[0][0]
       );
+    });
+  }
+
+  async getSelectionFormatCapture(): Promise<CellFormatCapture | null> {
+    return Excel.run(async (context) => {
+      const areas = context.workbook.getSelectedRanges().areas;
+      areas.load("items");
+      await context.sync();
+      if (areas.items.length === 0) return null;
+      const area = areas.items[0];
+      area.load(["rowCount", "columnCount"]);
+      const cell = area.getCell(0, 0);
+      cell.load("numberFormat");
+      const props = cell.getCellProperties(CAPTURE_PROPERTY_SPEC);
+      await context.sync();
+
+      const format = props.value[0][0]?.format;
+      const borders = format?.borders;
+      const font = format?.font;
+      const capture = emptyCapture();
+      capture.numberFormat = String(cell.numberFormat?.[0]?.[0] ?? "General");
+      capture.fontName = font?.name ?? null;
+      capture.fontSize = typeof font?.size === "number" ? font.size : null;
+      capture.fontColor = font?.color ?? null;
+      capture.bold = typeof font?.bold === "boolean" ? font.bold : null;
+      capture.italic = typeof font?.italic === "boolean" ? font.italic : null;
+      capture.underline = typeof font?.underline === "string" ? font.underline !== "None" : null;
+      capture.strikethrough = typeof font?.strikethrough === "boolean" ? font.strikethrough : null;
+      capture.fillPattern = format?.fill?.pattern ?? null;
+      capture.fillColor = format?.fill?.color ?? null;
+      capture.edges.borderTop = toCapturedEdge(borders?.top);
+      capture.edges.borderBottom = toCapturedEdge(borders?.bottom);
+      capture.edges.borderLeft = toCapturedEdge(borders?.left);
+      capture.edges.borderRight = toCapturedEdge(borders?.right);
+      capture.edges.borderDiagonalDown = toCapturedEdge(borders?.diagonalDown);
+      capture.edges.borderDiagonalUp = toCapturedEdge(borders?.diagonalUp);
+
+      // Inside edges exist only on a multi-cell range; reading them on a single
+      // cell is meaningless, so they stay null and the core derives them.
+      const insideH =
+        area.rowCount > 1 ? area.format.borders.getItem(Excel.BorderIndex.insideHorizontal) : null;
+      const insideV =
+        area.columnCount > 1 ? area.format.borders.getItem(Excel.BorderIndex.insideVertical) : null;
+      if (insideH || insideV) {
+        insideH?.load(["style", "weight", "color"]);
+        insideV?.load(["style", "weight", "color"]);
+        try {
+          await context.sync();
+          if (insideH) capture.edges.borderInsideHorizontal = toCapturedEdge(insideH);
+          if (insideV) capture.edges.borderInsideVertical = toCapturedEdge(insideV);
+        } catch (error) {
+          console.warn("[XLerate] inside borders not readable; deriving from outline", error);
+        }
+      }
+      return capture;
     });
   }
 
@@ -543,6 +603,37 @@ const FORMATTING_PROPERTY_SPEC: Excel.CellPropertiesLoadOptions = {
     },
   },
 };
+
+/** Same axes as FORMATTING_PROPERTY_SPEC plus border weight (the cycles never need it). */
+const CAPTURE_PROPERTY_SPEC: Excel.CellPropertiesLoadOptions = {
+  format: {
+    fill: { color: true, pattern: true },
+    font: {
+      name: true,
+      size: true,
+      color: true,
+      bold: true,
+      italic: true,
+      underline: true,
+      strikethrough: true,
+    },
+    borders: { color: true, style: true, weight: true },
+  },
+};
+
+function toCapturedEdge(
+  border:
+    | { style?: string | null; weight?: string | null; color?: string | null }
+    | null
+    | undefined
+): CapturedBorderEdge | null {
+  if (!border || typeof border.style !== "string") return null;
+  return {
+    style: border.style,
+    weight: typeof border.weight === "string" ? border.weight : null,
+    color: typeof border.color === "string" ? border.color : null,
+  };
+}
 
 function toFormattingSnapshot(
   address: CellAddress,

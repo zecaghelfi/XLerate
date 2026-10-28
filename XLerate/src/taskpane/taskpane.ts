@@ -12,6 +12,7 @@ import {
   saveWorkbookFormatSettings,
 } from "./formatSettingsStore";
 import { initSettingsWorkspace } from "./settingsWorkspace";
+import { ExcelPortLive } from "../adapters/excelPortLive";
 
 const SETTINGS_FILE_NAME = "xlerate-settings.json";
 const SETTINGS_FILE_ACCEPT = ".json";
@@ -200,6 +201,7 @@ Office.onReady((info) => {
     exportSettings: exportSettingsToFile,
     saveSettings: saveWorkbookFormatSettings,
     onStatus: setStatus,
+    captureSelectionFormat: () => new ExcelPortLive().getSelectionFormatCapture(),
   });
   installAutoColorProbeHelpers();
 
